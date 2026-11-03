@@ -1,0 +1,78 @@
+# JARION 1단계 PoC: Apache Guacamole 원격 접속 게이트웨이
+#
+# 구성: nginx(TLS, 외부 443) -> guacamole(웹앱) -> guacd(RDP 프록시) -> 실습실 PC(3389)
+#                                    \-> postgres(사용자/연결 정보)
+#
+# 외부에 노출되는 포트는 nginx의 80/443 뿐이다. guacamole/guacd/postgres는 내부 네트워크에만 있다.
+# 사용법은 README.md 참고.
+
+name: jarion-poc
+
+services:
+  guacd:
+    image: guacamole/guacd:${GUACAMOLE_VERSION:-1.5.5}
+    restart: unless-stopped
+    networks: [internal]
+    volumes:
+      - recordings:/var/lib/guacamole/recordings
+
+  postgres:
+    image: postgres:16.4
+    restart: unless-stopped
+    networks: [internal]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-guacamole_db}
+      POSTGRES_USER: ${POSTGRES_USER:-guacamole_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD 를 .env 에 설정하세요}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 최초 기동 시 1회만 실행된다 (scripts/init-db.sh 로 생성)
+      - ./initdb/initdb.sql:/docker-entrypoint-initdb.d/initdb.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  guacamole:
+    image: guacamole/guacamole:${GUACAMOLE_VERSION:-1.5.5}
+    restart: unless-stopped
+    networks: [internal]
+    depends_on:
+      guacd:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    environment:
+      GUACD_HOSTNAME: guacd
+      POSTGRESQL_HOSTNAME: postgres
+      POSTGRESQL_DATABASE: ${POSTGRES_DB:-guacamole_db}
+      POSTGRESQL_USER: ${POSTGRES_USER:-guacamole_user}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD}
+      # 계정 잠금 / 비밀번호 정책
+      POSTGRESQL_USER_PASSWORD_MIN_LENGTH: "10"
+      # 2단계 인증 (Google Authenticator 등 TOTP 앱)
+      TOTP_ENABLED: ${TOTP_ENABLED:-true}
+      # nginx 뒤에서 실제 접속자 IP를 로그에 남기기 위함
+      REMOTE_IP_VALVE_ENABLED: "true"
+    volumes:
+      - recordings:/var/lib/guacamole/recordings
+
+  nginx:
+    image: nginx:1.27.2-alpine
+    restart: unless-stopped
+    networks: [internal]
+    depends_on: [guacamole]
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+
+networks:
+  internal:
+
+volumes:
+  pgdata:
+  recordings:
