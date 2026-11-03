@@ -55,6 +55,13 @@ export type Machine = {
   session_id: number | null;
   session_status: SessionStatus | null;
   session_user: string | null;
+  agent_status: "none" | "ok" | "stale";
+  agent_version: string;
+  agent_seen_at: string | null;
+  console_user: string;
+  remote_users: string;
+  remote_state: "none" | "active" | "disconnected";
+  running: string;
 };
 
 export type AdminUser = User & { is_active: boolean; created_at: string };
@@ -134,4 +141,6 @@ export const END_REASON: Record<string, string> = {
   expired: "사용 시간 만료",
   no_show: "접속하지 않아 자동 반납",
   boot_timeout: "PC 가 켜지지 않음",
+  logged_off: "원격 PC 에서 직접 로그오프",
+  disconnected: "연결이 끊긴 채 오래 방치",
 };

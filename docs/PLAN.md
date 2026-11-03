@@ -75,7 +75,8 @@ JARION/
 ## 진행 현황
 - [x] 0~1단계 자료: `infra/poc`, `scripts/windows/Setup-LabPC.ps1`, `docs/it-setup-guide.md`
 - [x] 2단계 포털: `apps/api`, `apps/web`, `tools/wol/relay.py`, `infra/stack` (로그인, 즉시 배정, WoL, 상태 확인, Guacamole 1회용 접속, 관리 화면, 감사 로그)
-- [ ] 2단계 PC 에이전트: 반납·만료 시 강제 로그오프, 현장 사용자 감지, 하트비트
+- [x] 2단계 PC 에이전트: `agent/` (Go, Windows 서비스) — 반납·만료 시 로그오프, 현장 사용자 감지, 종료 임박 안내, 방치 세션 정리, 유휴 PC 종료(선택)
+- [ ] DB 마이그레이션(Alembic) 도입 — 시범 운영 전
 - [ ] 학교 SSO 연동 (방식 확인 후)
 - [ ] 4단계: 예약, 통계, 알림
 

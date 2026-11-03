@@ -10,8 +10,10 @@
 |---|---|---|
 | `infra/poc/` | Guacamole 단독 시험 구축 (수동 연결 등록) | 1단계 |
 | `scripts/windows/Setup-LabPC.ps1` | 실습실 PC 설정 (RDP, 방화벽, WoL, GPU 정책, 등록 CSV) | 1단계 |
+| `scripts/windows/Install-JarionAgent.ps1` | PC 에이전트 설치/업데이트 (GPO 시작 스크립트용) | 2단계 |
 | `tools/wol/` | WoL 전송 도구 `wol.py`, 실습실 VLAN 용 릴레이 `relay.py` | 1·2단계 |
 | `apps/api/` | 포털 백엔드 (FastAPI): 로그인, PC 배정, 상태 확인, WoL, Guacamole 접속 토큰 | 2단계 |
+| `agent/` | PC 에이전트 (Go, Windows 서비스): 상태 보고, 반납 시 로그오프, 현장 사용자 감지 — [설명](agent/README.md) | 2단계 |
 | `apps/web/` | 포털 화면 (Next.js 정적 빌드): 학생 화면, 관리 화면 | 2단계 |
 | `infra/stack/` | 2단계 배포 (nginx + api + postgres + guacamole) — [설치 안내](infra/stack/README.md) | 2단계 |
 

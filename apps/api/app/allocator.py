@@ -12,13 +12,17 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from . import agentcmd
 from .audit import audit
 from .config import Settings
 from .models import (
+    CMD_SHUTDOWN,
     ENDED,
     FAILED,
     OPEN_STATUSES,
     READY,
+    REMOTE_DISCONNECTED,
+    REMOTE_NONE,
     WAKING,
     Machine,
     RemoteSession,
@@ -78,7 +82,8 @@ def candidate_machines(
         q = q.where(Machine.id.not_in(busy))
     if software is not None:
         q = q.where(Machine.software.any(Software.id == software.id))
-    machines = list(db.scalars(q))
+    # 에이전트가 현장 사용자/포털 밖 원격 사용자를 보고한 PC 는 제외
+    machines = [m for m in db.scalars(q) if not m.occupied_by_others(now, settings.agent_fresh_seconds)]
 
     def lru(m: Machine) -> datetime:
         return m.last_used_at or _EPOCH
@@ -110,14 +115,32 @@ def mark_ready(session: RemoteSession, settings: Settings, now: datetime) -> Non
     session.machine.wake_failures = 0
 
 
+# 세션이 끝난 이유별로 원격 화면에 보여줄 안내 (None 이면 안내 없이 바로 로그오프)
+END_MESSAGES = {
+    "admin": "관리자가 사용을 종료했습니다. 잠시 후 로그오프됩니다. 작업을 저장하세요.",
+    "expired": "사용 시간이 끝났습니다. 잠시 후 로그오프됩니다. 작업을 저장하세요.",
+}
+
+
 def end_session(db: Session, session: RemoteSession, reason: str, now: datetime,
-                actor: User | None = None, status: str = ENDED) -> None:
+                actor: User | None = None, status: str = ENDED,
+                settings: Settings | None = None) -> None:
     session.status = status
     session.end_reason = reason
     session.ended_at = now
-    session.machine.last_used_at = now
+    m = session.machine
+    m.last_used_at = now
     audit(db, "session_end" if status == ENDED else "session_failed", actor or session.user,
-          session_id=session.id, machine=session.machine.name, reason=reason)
+          session_id=session.id, machine=m.name, reason=reason)
+
+    # 에이전트가 있으면 원격 세션을 로그오프시켜 다음 사람이 쓸 수 있게 한다
+    if status == ENDED and m.has_agent:
+        message = END_MESSAGES.get(reason)
+        delay = 0
+        if message:
+            agentcmd.queue_message(db, m, message, now, session)
+            delay = settings.logoff_grace_seconds if settings else 60
+        agentcmd.queue_logoff(db, m, now, delay, session)
 
 
 def allocate(
@@ -205,14 +228,53 @@ def tick(db: Session, settings: Settings, prober, waker: Waker, now: datetime) -
             elif now - s.created_at >= boot_timeout:
                 m.wake_failures += 1
                 m.last_wake_failure_at = now
-                end_session(db, s, "boot_timeout", now, status=FAILED)
+                end_session(db, s, "boot_timeout", now, status=FAILED, settings=settings)
             elif (s.wake_sent_at is None or now - s.wake_sent_at >= retry_after) \
                     and s.wake_attempts < settings.wake_max_attempts:
                 send_wake(db, s, waker, now)
         elif s.status == READY:
             if s.connected_at is None and s.ready_at and now - s.ready_at >= no_show:
-                end_session(db, s, "no_show", now)
+                end_session(db, s, "no_show", now, settings=settings)
             elif s.expires_at and now >= s.expires_at:
-                end_session(db, s, "expired", now)
+                end_session(db, s, "expired", now, settings=settings)
+            else:
+                _agent_session_checks(db, s, settings, now)
 
+    _idle_shutdown(db, machines, {s.machine_id for s in sessions if s.is_open}, settings, now)
     db.commit()
+
+
+def _agent_session_checks(db: Session, s: RemoteSession, settings: Settings, now: datetime) -> None:
+    """에이전트 보고를 바탕으로 한 사용 중 세션 처리: 종료 임박 안내, 창 닫음/직접 로그오프 감지."""
+    m = s.machine
+    if not m.agent_alive(now, settings.agent_fresh_seconds):
+        return
+
+    if (s.expires_at and s.warned_at is None and s.connected_at
+            and s.expires_at - now <= timedelta(minutes=settings.expiry_warning_minutes)):
+        mins = max(1, int((s.expires_at - now).total_seconds() // 60))
+        agentcmd.queue_message(db, m, f"사용 시간이 약 {mins}분 남았습니다. 작업을 저장하세요.", now, s)
+        s.warned_at = now
+
+    if s.connected_at is None or m.remote_state_since is None:
+        return
+    since = now - max(m.remote_state_since, s.connected_at)
+    if m.remote_state == REMOTE_NONE and since >= timedelta(minutes=settings.remote_absent_grace_minutes):
+        end_session(db, s, "logged_off", now, settings=settings)
+    elif m.remote_state == REMOTE_DISCONNECTED and \
+            since >= timedelta(minutes=settings.remote_disconnected_grace_minutes):
+        end_session(db, s, "disconnected", now, settings=settings)
+
+
+def _idle_shutdown(db: Session, machines: list[Machine], busy: set[int], settings: Settings,
+                   now: datetime) -> None:
+    if settings.idle_shutdown_minutes <= 0:
+        return
+    limit = timedelta(minutes=settings.idle_shutdown_minutes)
+    for m in machines:
+        if (m.online and m.id not in busy and m.idle_since and now - m.idle_since >= limit
+                and m.agent_alive(now, settings.agent_fresh_seconds)
+                and not agentcmd.pending(db, m, CMD_SHUTDOWN)):
+            agentcmd.queue_shutdown(db, m, now)
+            audit(db, "idle_shutdown", None, machine=m.name,
+                  idle_minutes=int((now - m.idle_since).total_seconds() // 60))

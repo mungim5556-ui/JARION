@@ -7,15 +7,17 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .. import agentcmd
 from ..allocator import end_session, send_wake
 from ..audit import audit
 from ..config import Settings
 from ..db import utcnow
 from ..deps import get_db, get_settings_dep, get_waker
-from ..models import OPEN_STATUSES, AuditLog, Lab, Machine, RemoteSession, Software, User
+from ..models import OPEN_STATUSES, AgentCommand, AuditLog, Lab, Machine, RemoteSession, Software, User
 from ..power import WakeError
 from ..schemas import (
     AdminSessionOut,
+    AgentCommandOut,
     AdminUserOut,
     AuditOut,
     LabIn,
@@ -134,15 +136,17 @@ def update_software(software_id: int, body: SoftwarePatch, db: Session = Depends
 
 # ------------------------------------------------------------------ PC
 @router.get("/machines", response_model=list[MachineOut])
-def list_machines(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+def list_machines(db: Session = Depends(get_db), settings: Settings = Depends(get_settings_dep),
+                  _: User = Depends(require_admin)):
     open_by_machine = _open_sessions_by_machine(db)
     machines = db.scalars(select(Machine).join(Lab).order_by(Lab.name, Machine.name))
-    return [machine_out(m, open_by_machine.get(m.id)) for m in machines]
+    now = utcnow()
+    return [machine_out(m, open_by_machine.get(m.id), now, settings) for m in machines]
 
 
 @router.post("/machines", response_model=MachineOut, status_code=201)
 def create_machine(body: MachineIn, db: Session = Depends(get_db),
-                   admin: User = Depends(require_admin)):
+                   settings: Settings = Depends(get_settings_dep), admin: User = Depends(require_admin)):
     _get(db, Lab, body.lab_id)
     data = body.model_dump(exclude={"software_ids"})
     data["mac"] = norm_mac(data["mac"])
@@ -150,12 +154,12 @@ def create_machine(body: MachineIn, db: Session = Depends(get_db),
     db.add(m)
     audit(db, "admin_machine_create", admin, name=m.name)
     _commit(db, "PC")
-    return machine_out(m, None)
+    return machine_out(m, None, utcnow(), settings)
 
 
 @router.patch("/machines/{machine_id}", response_model=MachineOut)
 def update_machine(machine_id: int, body: MachinePatch, db: Session = Depends(get_db),
-                   admin: User = Depends(require_admin)):
+                   settings: Settings = Depends(get_settings_dep), admin: User = Depends(require_admin)):
     m = _get(db, Machine, machine_id)
     changes = body.model_dump(exclude_unset=True)
     if "software_ids" in changes:
@@ -171,7 +175,7 @@ def update_machine(machine_id: int, body: MachinePatch, db: Session = Depends(ge
             setattr(m, k, v)
     audit(db, "admin_machine_update", admin, name=m.name, changes=body.model_dump(exclude_unset=True))
     _commit(db, "PC")
-    return machine_out(m, _open_sessions_by_machine(db).get(m.id))
+    return machine_out(m, _open_sessions_by_machine(db).get(m.id), utcnow(), settings)
 
 
 @router.delete("/machines/{machine_id}", status_code=204)
@@ -198,6 +202,37 @@ def wake_machine(machine_id: int, request: Request, db: Session = Depends(get_db
         audit(db, "admin_machine_wake", admin, ip=client_ip(request), name=m.name)
         db.commit()
     return {"ok": True}
+
+
+@router.post("/machines/{machine_id}/logoff", status_code=202)
+def logoff_machine(machine_id: int, request: Request, db: Session = Depends(get_db),
+                   admin: User = Depends(require_admin)):
+    """원격(RDP) 세션을 로그오프하도록 에이전트에 요청 (현장 사용자는 건드리지 않음)."""
+    m = _get(db, Machine, machine_id)
+    if not m.has_agent:
+        raise HTTPException(status.HTTP_409_CONFLICT, "에이전트가 설치되지 않은 PC 입니다")
+    agentcmd.queue_logoff(db, m, utcnow())
+    audit(db, "admin_machine_logoff", admin, ip=client_ip(request), name=m.name)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/machines/{machine_id}/agent", status_code=204)
+def revoke_agent(machine_id: int, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """에이전트 토큰 폐기 (PC 교체·분실 시). 에이전트는 다시 등록해야 한다."""
+    m = _get(db, Machine, machine_id)
+    m.agent_token_hash = None
+    m.agent_seen_at = None
+    m.console_user = m.remote_users = m.running = ""
+    audit(db, "admin_agent_revoke", admin, name=m.name)
+    db.commit()
+
+
+@router.get("/machines/{machine_id}/commands", response_model=list[AgentCommandOut])
+def machine_commands(machine_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    _get(db, Machine, machine_id)
+    return list(db.scalars(select(AgentCommand).where(AgentCommand.machine_id == machine_id)
+                           .order_by(AgentCommand.id.desc()).limit(50)))
 
 
 @router.post("/machines/import", response_model=MachineImportOut)
@@ -264,7 +299,7 @@ def force_end(session_id: int, db: Session = Depends(get_db),
     s = _get(db, RemoteSession, session_id)
     if not s.is_open:
         raise HTTPException(status.HTTP_409_CONFLICT, "이미 종료된 세션입니다")
-    end_session(db, s, "admin", utcnow(), actor=admin)
+    end_session(db, s, "admin", utcnow(), actor=admin, settings=settings)
     db.commit()
     return admin_session_out(s, settings)
 

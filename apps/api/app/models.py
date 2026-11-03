@@ -21,6 +21,16 @@ READY = "ready"     # 접속 가능
 ENDED = "ended"
 FAILED = "failed"
 OPEN_STATUSES = (WAKING, READY)
+
+# 에이전트가 보고하는 원격(RDP) 세션 상태
+REMOTE_NONE = "none"
+REMOTE_ACTIVE = "active"
+REMOTE_DISCONNECTED = "disconnected"
+
+# 에이전트 명령
+CMD_MESSAGE = "message"
+CMD_LOGOFF = "logoff"
+CMD_SHUTDOWN = "shutdown"
 _OPEN_SQL = text("status IN ('waking', 'ready')")
 
 machine_software = Table(
@@ -90,8 +100,30 @@ class Machine(Base):
     wake_failures: Mapped[int] = mapped_column(Integer, default=0)
     last_wake_failure_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
 
+    # PC 에이전트 (agent/) 가 보고하는 상태
+    agent_token_hash: Mapped[str | None] = mapped_column(String(64), index=True)
+    agent_version: Mapped[str] = mapped_column(String(50), default="")
+    agent_seen_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    console_user: Mapped[str] = mapped_column(String(200), default="")   # 현장(콘솔)에 로그인한 사람
+    remote_users: Mapped[str] = mapped_column(String(500), default="")   # 원격(RDP) 로그인 사용자, 쉼표 구분
+    remote_state: Mapped[str] = mapped_column(String(20), default=REMOTE_NONE)
+    remote_state_since: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    running: Mapped[str] = mapped_column(String(500), default="")        # 감시 대상 프로그램 실행 현황
+    idle_since: Mapped[datetime | None] = mapped_column(UTCDateTime)     # 아무도 안 쓰기 시작한 시각
+
     lab: Mapped[Lab] = relationship(back_populates="machines")
     software: Mapped[list[Software]] = relationship(secondary=machine_software, lazy="selectin")
+
+    @property
+    def has_agent(self) -> bool:
+        return self.agent_token_hash is not None
+
+    def agent_alive(self, now: datetime, fresh_seconds: int) -> bool:
+        return self.agent_seen_at is not None and (now - self.agent_seen_at).total_seconds() <= fresh_seconds
+
+    def occupied_by_others(self, now: datetime, fresh_seconds: int) -> bool:
+        """현장 사용자나 포털 밖의 원격 사용자가 있는지 (에이전트 보고가 최신일 때만 판단)."""
+        return self.agent_alive(now, fresh_seconds) and bool(self.console_user or self.remote_users)
 
 
 class RemoteSession(Base):
@@ -118,6 +150,7 @@ class RemoteSession(Base):
     connected_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    warned_at: Mapped[datetime | None] = mapped_column(UTCDateTime)  # 종료 임박 안내를 보낸 시각
 
     user: Mapped[User] = relationship(lazy="joined")
     machine: Mapped[Machine] = relationship(lazy="joined")
@@ -126,6 +159,26 @@ class RemoteSession(Base):
     @property
     def is_open(self) -> bool:
         return self.status in OPEN_STATUSES
+
+
+class AgentCommand(Base):
+    """에이전트에게 보낼 명령. 에이전트가 주기 보고(heartbeat) 응답으로 받아 실행하고 결과를 돌려준다."""
+
+    __tablename__ = "agent_commands"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    machine_id: Mapped[int] = mapped_column(ForeignKey("machines.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[int | None] = mapped_column(ForeignKey("sessions.id"))
+    kind: Mapped[str] = mapped_column(String(20))       # message | logoff | shutdown
+    payload: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    not_before: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    delivered_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    done_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+    ok: Mapped[bool | None] = mapped_column(Boolean)
+    error: Mapped[str] = mapped_column(Text, default="")
+
+    machine: Mapped[Machine] = relationship()
 
 
 class AuditLog(Base):

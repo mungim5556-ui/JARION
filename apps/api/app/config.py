@@ -41,6 +41,18 @@ class Settings(BaseSettings):
     probe_timeout_seconds: float = 1.5
     probe_workers: int = 32
 
+    # PC 에이전트
+    agent_enrollment_key: str = ""          # 비어 있으면 에이전트 등록 불가. 모든 PC 공통 등록 키
+    agent_interval_seconds: int = 15        # 에이전트 보고 주기
+    agent_fresh_seconds: int = 60           # 이 시간 안에 보고가 있어야 에이전트 상태를 믿는다
+    agent_exempt_users: str = ""            # 자동 로그오프에서 제외할 계정 (IT 관리자 등), 쉼표 구분
+    agent_watch_processes: str = "Revit.exe,midas*.exe,acad.exe"  # 실행 여부를 보고받을 프로그램
+    expiry_warning_minutes: int = 10        # 종료 몇 분 전에 원격 화면에 안내 메시지
+    logoff_grace_seconds: int = 60          # 시간 만료/관리자 종료 시 안내 후 로그오프까지 대기
+    remote_absent_grace_minutes: int = 5    # 접속 후 원격 세션이 사라지면(직접 로그오프) 이 시간 뒤 반납
+    remote_disconnected_grace_minutes: int = 15  # 창을 닫아 연결만 끊긴 상태가 이만큼 지속되면 반납
+    idle_shutdown_minutes: int = 0          # 아무도 안 쓰는 PC 를 이 시간 뒤 종료 (0 = 사용 안 함)
+
     # WoL 릴레이 인증 토큰 (tools/wol/relay.py 의 RELAY_TOKEN 과 같은 값)
     relay_token: str = ""
 

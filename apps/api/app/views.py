@@ -1,4 +1,6 @@
 """ORM -> 응답 스키마 변환."""
+from datetime import datetime
+
 from .config import Settings
 from .models import Machine, RemoteSession
 from .schemas import AdminSessionOut, MachineOut, SessionOut, SoftwareOut
@@ -30,7 +32,13 @@ def admin_session_out(s: RemoteSession, settings: Settings) -> AdminSessionOut:
     )
 
 
-def machine_out(m: Machine, open_session: RemoteSession | None) -> MachineOut:
+def machine_out(m: Machine, open_session: RemoteSession | None, now: datetime, settings: Settings) -> MachineOut:
+    if not m.has_agent:
+        agent_status = "none"
+    elif m.agent_alive(now, settings.agent_fresh_seconds):
+        agent_status = "ok"
+    else:
+        agent_status = "stale"
     return MachineOut(
         id=m.id,
         lab_id=m.lab_id,
@@ -51,4 +59,11 @@ def machine_out(m: Machine, open_session: RemoteSession | None) -> MachineOut:
         session_id=open_session.id if open_session else None,
         session_status=open_session.status if open_session else None,
         session_user=open_session.user.username if open_session else None,
+        agent_status=agent_status,
+        agent_version=m.agent_version,
+        agent_seen_at=m.agent_seen_at,
+        console_user=m.console_user,
+        remote_users=m.remote_users,
+        remote_state=m.remote_state,
+        running=m.running,
     )

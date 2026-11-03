@@ -75,6 +75,8 @@ function machineBadge(m: Machine) {
   if (!m.enabled) return <span className="badge">사용 안 함</span>;
   if (m.session_status === "waking") return <span className="badge warn"><span className="dot" />켜는 중</span>;
   if (m.session_status === "ready") return <span className="badge warn"><span className="dot" />사용 중</span>;
+  if (m.agent_status === "ok" && m.console_user) return <span className="badge warn"><span className="dot" />현장 사용 중</span>;
+  if (m.agent_status === "ok" && m.remote_users) return <span className="badge danger"><span className="dot" />포털 밖 원격 접속</span>;
   if (m.online) return <span className="badge ok"><span className="dot" />켜짐 · 비어 있음</span>;
   return <span className="badge"><span className="dot" />꺼짐</span>;
 }
@@ -99,7 +101,7 @@ function MachinesTab() {
               <th>IP / MAC</th>
               <th>프로그램</th>
               <th>사용자</th>
-              <th>마지막 응답</th>
+              <th>에이전트</th>
               <th />
             </tr>
           </thead>
@@ -117,7 +119,7 @@ function MachinesTab() {
                   {machineBadge(m)}
                   {m.wake_failures > 0 && <div className="small" style={{ color: "var(--danger)" }}>켜기 실패 {m.wake_failures}회</div>}
                 </td>
-                <td>
+                <td style={{ whiteSpace: "nowrap" }}>
                   <b>{m.name}</b>
                   {m.gpu && <div className="muted small">{m.gpu}</div>}
                 </td>
@@ -153,8 +155,21 @@ function MachinesTab() {
                     </span>
                   )}
                 </td>
-                <td>{m.session_user ?? "-"}</td>
-                <td className="small">{fmtTime(m.last_seen_at)}</td>
+                <td className="small">
+                  {m.session_user && <div>포털: <b>{m.session_user}</b></div>}
+                  {m.console_user && <div>현장: {m.console_user}</div>}
+                  {m.remote_users && (
+                    <div>
+                      원격: {m.remote_users}
+                      {m.remote_state === "disconnected" && <span className="muted"> (연결 끊김)</span>}
+                    </div>
+                  )}
+                  {!m.session_user && !m.console_user && !m.remote_users && "-"}
+                </td>
+                <td className="small">
+                  <AgentBadge m={m} />
+                  {m.running && <div className="muted">실행 중: {m.running}</div>}
+                </td>
                 <td>
                   <div className="row">
                     <button
@@ -164,6 +179,31 @@ function MachinesTab() {
                     >
                       켜기
                     </button>
+                    {m.agent_status !== "none" && (
+                      <button
+                        className="btn sm"
+                        disabled={!m.remote_users}
+                        title="원격(RDP) 사용자만 로그오프합니다. 현장 사용자는 건드리지 않습니다."
+                        onClick={() => {
+                          if (confirm(`${m.name} 의 원격 사용자(${m.remote_users})를 로그오프할까요?`))
+                            act(() => api(`/api/admin/machines/${m.id}/logoff`, { method: "POST" }), setError, reload);
+                        }}
+                      >
+                        로그오프
+                      </button>
+                    )}
+                    {m.agent_status !== "none" && (
+                      <button
+                        className="btn sm danger"
+                        title="PC 교체·토큰 유출 시. 에이전트가 자동으로 다시 등록합니다."
+                        onClick={() => {
+                          if (confirm(`${m.name} 의 에이전트 토큰을 폐기할까요? 에이전트는 다시 등록됩니다.`))
+                            act(() => api(`/api/admin/machines/${m.id}/agent`, { method: "DELETE" }), setError, reload);
+                        }}
+                      >
+                        토큰 폐기
+                      </button>
+                    )}
                     <button
                       className="btn sm"
                       onClick={() =>
@@ -186,6 +226,17 @@ function MachinesTab() {
       <ImportCard onDone={reload} />
     </div>
   );
+}
+
+function AgentBadge({ m }: { m: Machine }) {
+  if (m.agent_status === "none") return <span className="badge">미설치</span>;
+  if (m.agent_status === "stale")
+    return (
+      <span className="badge" title={`마지막 보고 ${fmtTime(m.agent_seen_at)}`}>
+        응답 없음
+      </span>
+    );
+  return <span className="badge ok">정상 {m.agent_version && `v${m.agent_version}`}</span>;
 }
 
 function SoftwarePicker({

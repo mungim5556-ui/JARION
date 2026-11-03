@@ -152,6 +152,6 @@ def end(
     s = _own_session(db, session_id, user)
     if not s.is_open:
         raise HTTPException(status.HTTP_409_CONFLICT, "이미 종료된 세션입니다")
-    end_session(db, s, "user", utcnow())
+    end_session(db, s, "user", utcnow(), settings=settings)
     db.commit()
     return session_out(s, settings)

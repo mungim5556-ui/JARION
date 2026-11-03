@@ -8,7 +8,7 @@ from .allocator import tick
 from .config import Settings, get_settings
 from .db import Database, utcnow
 from .power import Prober, RelayWaker, TcpProber, Waker
-from .routers import admin, auth, student
+from .routers import admin, agent, auth, student
 
 log = logging.getLogger("jarion")
 
@@ -59,6 +59,7 @@ def create_app(
     app.include_router(auth.router)
     app.include_router(student.router)
     app.include_router(admin.router)
+    app.include_router(agent.router)
 
     @app.get("/api/health")
     def health():

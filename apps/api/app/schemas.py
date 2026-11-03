@@ -163,6 +163,25 @@ class MachineOut(BaseModel):
     session_id: int | None
     session_status: str | None
     session_user: str | None
+    agent_status: str  # none(미설치) | ok | stale(응답 없음)
+    agent_version: str
+    agent_seen_at: datetime | None
+    console_user: str
+    remote_users: str
+    remote_state: str
+    running: str
+
+
+class AgentCommandOut(ORM):
+    id: int
+    kind: str
+    payload: str
+    created_at: datetime
+    not_before: datetime
+    delivered_at: datetime | None
+    done_at: datetime | None
+    ok: bool | None
+    error: str
 
 
 class MachineImportIn(BaseModel):
