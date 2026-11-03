@@ -1,0 +1,29 @@
+[project]
+name = "jarion-api"
+version = "0.1.0"
+description = "JARION 실습실 PC 원격 이용 포털 백엔드"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.32.1",
+    "sqlalchemy==2.0.36",
+    "psycopg[binary]==3.2.3",
+    "pydantic-settings==2.6.1",
+    "pyjwt==2.10.1",
+    "bcrypt==4.2.1",
+    "cryptography==44.0.0",
+    "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]

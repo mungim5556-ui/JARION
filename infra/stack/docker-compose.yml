@@ -1,0 +1,88 @@
+# JARION 2단계: 포털 + 원격 접속 게이트웨이
+#
+#   [학생 브라우저] --443--> nginx --/----------> 포털 정적 파일
+#                                  --/api/------> api (FastAPI, PC 배정·WoL·상태 확인)
+#                                  --/guacamole/-> guacamole -> guacd --3389--> 실습실 PC
+#
+# Guacamole 은 encrypted JSON 인증만 사용한다. 포털(api)이 세션마다 1회용 접속 정보를
+# 암호화해서 넘기므로 Guacamole 쪽에 학생 계정/연결을 따로 등록하지 않는다.
+# 빌드 컨텍스트가 저장소 루트이므로 이 디렉터리에서 실행한다: docker compose up -d --build
+
+name: jarion
+
+services:
+  postgres:
+    image: postgres:16.4
+    restart: unless-stopped
+    networks: [internal]
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?.env 에 POSTGRES_PASSWORD 를 설정하세요}
+      JARION_DB_PASSWORD: ${JARION_DB_PASSWORD:?.env 에 JARION_DB_PASSWORD 를 설정하세요}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/00-jarion.sh:/docker-entrypoint-initdb.d/00-jarion.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d jarion"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ../../apps/api
+    restart: unless-stopped
+    networks: [internal]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      JARION_DATABASE_URL: postgresql+psycopg://jarion:${JARION_DB_PASSWORD}@postgres:5432/jarion
+      JARION_JWT_SECRET: ${JARION_JWT_SECRET:?.env 에 JARION_JWT_SECRET 를 설정하세요}
+      JARION_GUAC_JSON_SECRET_KEY: ${GUAC_JSON_SECRET_KEY:?.env 에 GUAC_JSON_SECRET_KEY 를 설정하세요}
+      JARION_RELAY_TOKEN: ${RELAY_TOKEN:?.env 에 RELAY_TOKEN 을 설정하세요}
+      JARION_SESSION_MAX_MINUTES: ${SESSION_MAX_MINUTES:-240}
+      JARION_NO_SHOW_MINUTES: ${NO_SHOW_MINUTES:-15}
+      JARION_ALLOW_CLIPBOARD_COPY: ${ALLOW_CLIPBOARD_COPY:-true}
+      JARION_ALLOW_CLIPBOARD_PASTE: ${ALLOW_CLIPBOARD_PASTE:-true}
+      JARION_RECORDING_ENABLED: ${RECORDING_ENABLED:-false}
+      JARION_RDP_DOMAIN: ${RDP_DOMAIN:-}
+      JARION_RDP_PREFILL_USERNAME: ${RDP_PREFILL_USERNAME:-false}
+
+  guacd:
+    image: guacamole/guacd:${GUACAMOLE_VERSION:-1.5.5}
+    restart: unless-stopped
+    networks: [internal]
+    volumes:
+      - recordings:/var/lib/guacamole/recordings
+
+  guacamole:
+    image: guacamole/guacamole:${GUACAMOLE_VERSION:-1.5.5}
+    restart: unless-stopped
+    networks: [internal]
+    depends_on: [guacd]
+    environment:
+      GUACD_HOSTNAME: guacd
+      JSON_SECRET_KEY: ${GUAC_JSON_SECRET_KEY}
+      REMOTE_IP_VALVE_ENABLED: "true"
+    volumes:
+      - recordings:/var/lib/guacamole/recordings
+
+  nginx:
+    build:
+      context: ../..
+      dockerfile: infra/stack/nginx/Dockerfile
+    restart: unless-stopped
+    networks: [internal]
+    depends_on: [api, guacamole]
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./certs:/etc/nginx/certs:ro
+
+networks:
+  internal:
+
+volumes:
+  pgdata:
+  recordings:

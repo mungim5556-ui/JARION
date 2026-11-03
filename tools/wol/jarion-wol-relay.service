@@ -1,0 +1,28 @@
+# WoL 릴레이 systemd 서비스 (실습실 VLAN 안의 라즈베리파이 등)
+#
+# 설치:
+#   sudo mkdir -p /opt/jarion && sudo cp wol.py relay.py /opt/jarion/
+#   sudo cp jarion-wol-relay.service /etc/systemd/system/
+#   sudo systemctl edit jarion-wol-relay   # [Service] Environment=RELAY_TOKEN=... 추가
+#   sudo systemctl enable --now jarion-wol-relay
+#
+# 아래 ExecStart 의 --allow-from(포털 서버 IP)과 --broadcast(실습실 브로드캐스트 주소)를 바꾸세요.
+
+[Unit]
+Description=JARION Wake-on-LAN relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+DynamicUser=yes
+ExecStart=/usr/bin/python3 -I /opt/jarion/relay.py --listen 0.0.0.0 --port 8080 \
+    --allow-from 10.0.5.20 --broadcast 10.20.30.255
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -67,10 +67,17 @@ JARION/
   apps/web/          # Next.js 포털
   apps/api/          # 백엔드 API + 스케줄러
   agent/             # Windows 에이전트 (Go)
-  wol-relay/         # WoL 릴레이 (Go/Python)
+  tools/wol/         # WoL 전송 도구 + 릴레이 (Python)
   infra/             # docker-compose (guacamole, guacd, postgres, redis, api, web), nginx/TLS
   docs/              # 아키텍처, IT팀 설정 가이드(GPO, 방화벽, BIOS WoL)
 ```
+
+## 진행 현황
+- [x] 0~1단계 자료: `infra/poc`, `scripts/windows/Setup-LabPC.ps1`, `docs/it-setup-guide.md`
+- [x] 2단계 포털: `apps/api`, `apps/web`, `tools/wol/relay.py`, `infra/stack` (로그인, 즉시 배정, WoL, 상태 확인, Guacamole 1회용 접속, 관리 화면, 감사 로그)
+- [ ] 2단계 PC 에이전트: 반납·만료 시 강제 로그오프, 현장 사용자 감지, 하트비트
+- [ ] 학교 SSO 연동 (방식 확인 후)
+- [ ] 4단계: 예약, 통계, 알림
 
 ## 검증 방법
 - PoC: 교외 네트워크(모바일 핫스팟)에서 포털 접속 → PC 자동 부팅 → 브라우저 RDP 접속 → Revit/MIDAS 실행 및 라이선스 정상 확인
